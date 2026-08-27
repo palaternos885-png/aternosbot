@@ -1,0 +1,16 @@
+{
+  "name": "yuta-afk-bot",
+  "version": "1.0.0",
+  "description": "Minecraft AFK bot (login/register + random walk) for Railway",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.5"
+  }
+}
