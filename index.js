@@ -32,6 +32,18 @@ let walkTimer = null
 let reconnectTimer = null
 let combatWatcher = null
 let inCombat = false
+let loggedIn = false
+
+// عبارت‌هایی که نشون میدن AuthMe لاگین رو تایید کرده (بسته به پلاگین ممکنه فرق کنه)
+const LOGIN_SUCCESS_PATTERNS = [
+  'successful login',
+  'logged in',
+  'you are now logged in',
+  'ورود موفق'
+]
+
+// فاصله‌ی امن بعد از تایید لاگین، قبل از فعال کردن حرکت/نبرد
+const POST_LOGIN_GRACE_MS = 3000
 
 // ===== محافظ کلی برنامه (خط دفاعی آخر) =====
 process.on('uncaughtException', (err) => {
@@ -86,6 +98,8 @@ function createBot() {
     bot.pvp.viewDistance = COMBAT_RADIUS
     bot.pvp.followRange = 2
 
+    loggedIn = false
+
     // ابتدا تلاش برای ثبت‌نام، سپس ورود
     setTimeout(() => {
       try { bot.chat(`/register ${PASSWORD} ${PASSWORD}`) } catch (e) {}
@@ -95,14 +109,22 @@ function createBot() {
       try { bot.chat(`/login ${PASSWORD}`) } catch (e) {}
     }, 5000)
 
-    startWalking()
-    startCombatWatcher()
+    // اگه هیچ پیام تاییدی از سرور نگرفتیم، حداکثر بعد از ۱۲ ثانیه (فرض بر لاگین موفق) شروع کن
+    // این یه fallback است، راه اصلی تشخیص از روی پیام چت سرور است (پایین)
+    setTimeout(() => {
+      confirmLogin('fallback timeout')
+    }, 12000)
   })
 
   bot.on('message', (jsonMsg) => {
     try {
       const text = jsonMsg.toString()
       if (text.trim().length > 0) console.log('[چت سرور]', text)
+
+      const lower = text.toLowerCase()
+      if (!loggedIn && LOGIN_SUCCESS_PATTERNS.some(p => lower.includes(p))) {
+        confirmLogin('پیام سرور: ' + text.trim())
+      }
     } catch (e) {
       console.log('[Yuta] خطا در نمایش پیام چت (نادیده گرفته شد):', e.message)
     }
@@ -122,6 +144,7 @@ function createBot() {
 
   bot.on('kicked', (reason) => {
     console.log('[Yuta] از سرور اخراج شد:', reason)
+    loggedIn = false
     stopWalking()
     stopCombatWatcher()
     scheduleReconnect()
@@ -129,6 +152,7 @@ function createBot() {
 
   bot.on('end', () => {
     console.log('[Yuta] اتصال قطع شد.')
+    loggedIn = false
     stopWalking()
     stopCombatWatcher()
     scheduleReconnect()
@@ -137,6 +161,17 @@ function createBot() {
   bot.on('error', (err) => {
     console.log('[Yuta] خطا:', err.message)
   })
+}
+
+function confirmLogin(reason) {
+  if (loggedIn) return
+  loggedIn = true
+  console.log(`[Yuta] لاگین تایید شد (${reason}) — بعد از ${POST_LOGIN_GRACE_MS / 1000} ثانیه حرکت/نبرد فعال می‌شود.`)
+  setTimeout(() => {
+    if (!bot || !bot.entity) return
+    startWalking()
+    startCombatWatcher()
+  }, POST_LOGIN_GRACE_MS)
 }
 
 function scheduleReconnect() {
@@ -161,7 +196,7 @@ function stopWalking() {
 }
 
 function walkRandom() {
-  if (!bot || !bot.entity || !spawnPos || inCombat) return
+  if (!bot || !bot.entity || !spawnPos || inCombat || !loggedIn) return
 
   const dx = Math.floor(Math.random() * (WALK_RADIUS * 2 + 1)) - WALK_RADIUS
   const dz = Math.floor(Math.random() * (WALK_RADIUS * 2 + 1)) - WALK_RADIUS
@@ -182,7 +217,7 @@ function walkRandom() {
 function startCombatWatcher() {
   stopCombatWatcher()
   combatWatcher = setInterval(() => {
-    if (!bot || !bot.entity) return
+    if (!bot || !bot.entity || !loggedIn) return
 
     // اگر همین الان درگیر نبرد است، کاری نکن (خود پلاگین pvp مدیریتش می‌کنه)
     if (bot.pvp.target) {
