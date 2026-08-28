@@ -1,7 +1,7 @@
 {
   "name": "yuta-afk-bot",
   "version": "1.0.0",
-  "description": "Minecraft AFK bot (login/register + random walk) for Railway",
+  "description": "Minecraft AFK bot (login/register + random walk + aggressive PvP) for Railway",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "mineflayer": "^4.20.1",
-    "mineflayer-pathfinder": "^2.4.5"
+    "mineflayer-pathfinder": "^2.4.5",
+    "mineflayer-pvp": "^1.3.2"
   }
 }
