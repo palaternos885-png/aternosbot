@@ -22,7 +22,25 @@ let bot = null
 let spawnPos = null
 let walkTimer = null
 let reconnectTimer = null
-let loggedIn = false
+
+// ===== محافظ کلی برنامه =====
+// بعضی از پیام‌های چت سرور (فرمت‌های خاص پروتکل 1.21.x) باعث کرش کتابخونه‌ی
+// prismarine-chat می‌شن. به‌جای این‌که کل برنامه بمیره، خطا رو می‌گیریم،
+// اتصال فعلی رو می‌بندیم و دوباره وصل می‌شیم.
+process.on('uncaughtException', (err) => {
+  console.log('[Yuta] خطای غیرمنتظره کنترل شد:', err.message)
+  try {
+    if (bot) bot.quit()
+  } catch (e) {
+    // نادیده گرفته می‌شود
+  }
+  stopWalking()
+  scheduleReconnect()
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.log('[Yuta] Promise rejection کنترل نشده:', reason)
+})
 
 function createBot() {
   console.log(`[Yuta] در حال اتصال به ${HOST}:${PORT} ...`)
@@ -39,7 +57,6 @@ function createBot() {
 
   bot.once('spawn', () => {
     console.log('[Yuta] وارد سرور شد.')
-    loggedIn = false
     spawnPos = bot.entity.position.clone()
 
     const movements = new Movements(bot)
@@ -47,23 +64,28 @@ function createBot() {
 
     // ابتدا تلاش برای ثبت‌نام، سپس ورود
     setTimeout(() => {
-      bot.chat(`/register ${PASSWORD} ${PASSWORD}`)
+      try { bot.chat(`/register ${PASSWORD} ${PASSWORD}`) } catch (e) {}
     }, 2000)
 
     setTimeout(() => {
-      bot.chat(`/login ${PASSWORD}`)
+      try { bot.chat(`/login ${PASSWORD}`) } catch (e) {}
     }, 5000)
 
     startWalking()
   })
 
   bot.on('message', (jsonMsg) => {
-    const text = jsonMsg.toString()
-    if (text.trim().length > 0) console.log('[چت سرور]', text)
+    try {
+      const text = jsonMsg.toString()
+      if (text.trim().length > 0) console.log('[چت سرور]', text)
+    } catch (e) {
+      console.log('[Yuta] خطا در نمایش پیام چت (نادیده گرفته شد):', e.message)
+    }
   })
 
   bot.on('kicked', (reason) => {
     console.log('[Yuta] از سرور اخراج شد:', reason)
+    stopWalking()
     scheduleReconnect()
   })
 
