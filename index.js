@@ -1,6 +1,5 @@
 const mineflayer = require('mineflayer')
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
-const { plugin: pvpPlugin } = require('mineflayer-pvp')
 const http = require('http')
 
 // ===== تنظیمات (از Environment Variables خونده می‌شوند) =====
@@ -21,6 +20,12 @@ const PVP_WHITELIST = (process.env.PVP_WHITELIST || '')
   .map(s => s.trim())
   .filter(Boolean)
 
+// ===== تنظیمات نبرد شبیه‌انسان =====
+const ATTACK_COOLDOWN_MS = 650      // فاصله بین ضربات، مثل ریتم واقعی یه شمشیر
+const ATTACK_REACH = 3              // فاصله‌ای که ضربه بزنه
+const COMBAT_GIVEUP_RADIUS_MULT = 1.5 // اگه حریف چند برابر COMBAT_RADIUS دور شد، ول کن
+const MAX_COMBAT_DURATION_MS = 90 * 1000 // سقف امن برای یه نبرد، بعدش عقب‌نشینی
+
 if (!HOST) {
   console.error('خطا: متغیر محیطی SERVER_HOST تنظیم نشده است.')
   process.exit(1)
@@ -31,6 +36,9 @@ let spawnPos = null
 let walkTimer = null
 let reconnectTimer = null
 let combatWatcher = null
+let attackInterval = null
+let combatTarget = null
+let combatStartedAt = null
 let inCombat = false
 let loggedIn = false
 
@@ -85,7 +93,6 @@ function createBot() {
   }
 
   bot.loadPlugin(pathfinder)
-  bot.loadPlugin(pvpPlugin)
 
   bot.once('spawn', () => {
     console.log('[Yuta] وارد سرور شد.')
@@ -94,9 +101,7 @@ function createBot() {
     const movements = new Movements(bot)
     bot.pathfinder.setMovements(movements)
 
-    // وقتی حریف بیش از COMBAT_RADIUS بلاک دور بشه، بات خودش دست از تعقیب می‌کشه
-    bot.pvp.viewDistance = COMBAT_RADIUS
-    bot.pvp.followRange = 2
+    // نبرد با منطق دستی (نه پلاگین pvp) برای اینکه حرکت طبیعی‌تر باشه
 
     loggedIn = false
 
@@ -130,21 +135,17 @@ function createBot() {
     }
   })
 
-  // وقتی کسی به بات حمله کنه، فوری وارد نبرد می‌شه (حتی اگه در شعاع دیدش نبود)
-  bot.on('entityHurt', (entity) => {
-    if (entity !== bot.entity) return
-  })
-
-  bot._client.on('damage_event', () => {})
-
-  bot.on('stoppedAttacking', () => {
-    console.log('[Yuta] نبرد پایان یافت (حریف کشته شد یا دور شد).')
-    inCombat = false
+  // وقتی هدفِ نبرد کشته می‌شه
+  bot.on('entityDead', (entity) => {
+    if (combatTarget && entity === combatTarget) {
+      endCombat('حریف کشته شد')
+    }
   })
 
   bot.on('kicked', (reason) => {
     console.log('[Yuta] از سرور اخراج شد:', reason)
     loggedIn = false
+    endCombat('اتصال قطع شد')
     stopWalking()
     stopCombatWatcher()
     scheduleReconnect()
@@ -153,6 +154,7 @@ function createBot() {
   bot.on('end', () => {
     console.log('[Yuta] اتصال قطع شد.')
     loggedIn = false
+    endCombat('اتصال قطع شد')
     stopWalking()
     stopCombatWatcher()
     scheduleReconnect()
@@ -218,20 +220,11 @@ function startCombatWatcher() {
   stopCombatWatcher()
   combatWatcher = setInterval(() => {
     if (!bot || !bot.entity || !loggedIn) return
-
-    // اگر همین الان درگیر نبرد است، کاری نکن (خود پلاگین pvp مدیریتش می‌کنه)
-    if (bot.pvp.target) {
-      inCombat = true
-      return
-    }
+    if (combatTarget) return // همین الان درگیر نبرد است
 
     const target = findNearestEnemyPlayer()
     if (target) {
-      console.log(`[Yuta] وارد نبرد شد با: ${target.username}`)
-      inCombat = true
-      equipBestWeapon()
-      bot.pathfinder.setGoal(null) // توقف راه رفتن معمولی
-      bot.pvp.attack(target)
+      engageCombat(target)
     }
   }, 1000)
 }
@@ -241,7 +234,75 @@ function stopCombatWatcher() {
     clearInterval(combatWatcher)
     combatWatcher = null
   }
+}
+
+// شروع نبرد: تعقیب با pathfinder (همون سیستمی که برای راه‌رفتن پایدار بود)
+// + ضربه با ریتم واقعی یه بازیکن، نه هر تیک
+function engageCombat(target) {
+  console.log(`[Yuta] وارد نبرد شد با: ${target.username}`)
+  inCombat = true
+  combatTarget = target
+  combatStartedAt = Date.now()
+  equipBestWeapon()
+
+  try {
+    bot.pathfinder.setGoal(new goals.GoalFollow(target, 2), true)
+  } catch (e) {
+    console.log('[Yuta] خطا در تعقیب حریف:', e.message)
+  }
+
+  if (attackInterval) clearInterval(attackInterval)
+  attackInterval = setInterval(() => {
+    if (!bot || !bot.entity || !combatTarget) {
+      endCombat('حریف در دسترس نیست')
+      return
+    }
+
+    // اگه بازیکن دیگه توی لیست بازیکنای سرور نیست (خارج شد)
+    const stillPresent = Object.values(bot.players).some(p => p.entity === combatTarget)
+    if (!stillPresent) {
+      endCombat('حریف دیگه در سرور نیست')
+      return
+    }
+
+    const dist = bot.entity.position.distanceTo(combatTarget.position)
+
+    if (dist > COMBAT_RADIUS * COMBAT_GIVEUP_RADIUS_MULT) {
+      endCombat('حریف خیلی دور شد')
+      return
+    }
+
+    if (Date.now() - combatStartedAt > MAX_COMBAT_DURATION_MS) {
+      endCombat('سقف زمانی نبرد (احتیاطی)')
+      return
+    }
+
+    if (dist <= ATTACK_REACH) {
+      try {
+        bot.lookAt(combatTarget.position.offset(0, combatTarget.height * 0.8, 0))
+        bot.attack(combatTarget)
+      } catch (e) {
+        // نادیده گرفته می‌شود
+      }
+    }
+  }, ATTACK_COOLDOWN_MS)
+}
+
+function endCombat(reason) {
+  if (!combatTarget && !inCombat) return
+  console.log(`[Yuta] نبرد پایان یافت: ${reason}`)
   inCombat = false
+  combatTarget = null
+  combatStartedAt = null
+  if (attackInterval) {
+    clearInterval(attackInterval)
+    attackInterval = null
+  }
+  try {
+    if (bot && bot.pathfinder) bot.pathfinder.setGoal(null)
+  } catch (e) {
+    // نادیده گرفته می‌شود
+  }
 }
 
 function findNearestEnemyPlayer() {
