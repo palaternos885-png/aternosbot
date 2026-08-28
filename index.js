@@ -238,6 +238,10 @@ function stopCombatWatcher() {
 
 // شروع نبرد: تعقیب با pathfinder (همون سیستمی که برای راه‌رفتن پایدار بود)
 // + ضربه با ریتم واقعی یه بازیکن، نه هر تیک
+// + اگه حریف خیلی بالاتر باشه (مثلاً داره پرواز می‌کنه)، تعقیبش نمی‌کنیم چون
+//   pathfinder زمینی برای رسیدن بهش مدام تلاش/شکست می‌خوره و همین حرکت نامنظم تولید می‌کنه
+const MAX_CHASE_HEIGHT_DIFF = 3
+
 function engageCombat(target) {
   console.log(`[Yuta] وارد نبرد شد با: ${target.username}`)
   inCombat = true
@@ -245,11 +249,29 @@ function engageCombat(target) {
   combatStartedAt = Date.now()
   equipBestWeapon()
 
-  try {
-    bot.pathfinder.setGoal(new goals.GoalFollow(target, 2), true)
-  } catch (e) {
-    console.log('[Yuta] خطا در تعقیب حریف:', e.message)
+  let chasing = false
+
+  const updateChase = () => {
+    if (!bot || !bot.entity || !combatTarget) return
+    const dy = combatTarget.position.y - bot.entity.position.y
+
+    if (dy > MAX_CHASE_HEIGHT_DIFF) {
+      // حریف احتمالاً در حال پروازه - تعقیب نمی‌کنیم، فقط سرجامون می‌مونیم
+      if (chasing) {
+        try { bot.pathfinder.setGoal(null) } catch (e) {}
+        chasing = false
+      }
+    } else if (!chasing) {
+      try {
+        bot.pathfinder.setGoal(new goals.GoalFollow(combatTarget, 2), true)
+        chasing = true
+      } catch (e) {
+        console.log('[Yuta] خطا در تعقیب حریف:', e.message)
+      }
+    }
   }
+
+  updateChase()
 
   if (attackInterval) clearInterval(attackInterval)
   attackInterval = setInterval(() => {
@@ -276,6 +298,8 @@ function engageCombat(target) {
       endCombat('سقف زمانی نبرد (احتیاطی)')
       return
     }
+
+    updateChase()
 
     if (dist <= ATTACK_REACH) {
       try {
