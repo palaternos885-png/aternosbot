@@ -23,10 +23,7 @@ let spawnPos = null
 let walkTimer = null
 let reconnectTimer = null
 
-// ===== محافظ کلی برنامه =====
-// بعضی از پیام‌های چت سرور (فرمت‌های خاص پروتکل 1.21.x) باعث کرش کتابخونه‌ی
-// prismarine-chat می‌شن. به‌جای این‌که کل برنامه بمیره، خطا رو می‌گیریم،
-// اتصال فعلی رو می‌بندیم و دوباره وصل می‌شیم.
+// ===== محافظ کلی برنامه (خط دفاعی آخر) =====
 process.on('uncaughtException', (err) => {
   console.log('[Yuta] خطای غیرمنتظره کنترل شد:', err.message)
   try {
@@ -52,6 +49,21 @@ function createBot() {
     version: MC_VERSION,
     auth: 'offline' // برای سرورهای آفلاین/کرک آترنوس. اگر سرور آنلاین-مود دارد، این را بردارید.
   })
+
+  // ===== محافظ اصلی: جلوگیری از کرش به‌خاطر پیام‌های چت با فرمت ناشناخته =====
+  // بعضی از پیام‌های چت سرور (فرمت‌های خاص پروتکل 1.21.x مثل اسکوربورد یا اکشن‌بار)
+  // کتابخونه‌ی داخلی prismarine-chat رو کرش می‌دن. با wrap کردن emit روی کلاینت
+  // پروتکل، هر خطای پرتاب‌شده توسط هر شنونده‌ای (از جمله خود mineflayer) گرفته
+  // می‌شه و فقط همون یک پیام نادیده گرفته می‌شه، بدون قطع اتصال.
+  const originalClientEmit = bot._client.emit.bind(bot._client)
+  bot._client.emit = function (event, ...args) {
+    try {
+      return originalClientEmit(event, ...args)
+    } catch (err) {
+      console.log(`[Yuta] یک پیام از سرور قابل پردازش نبود و نادیده گرفته شد (${event}): ${err.message}`)
+      return false
+    }
+  }
 
   bot.loadPlugin(pathfinder)
 
