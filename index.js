@@ -22,6 +22,7 @@ const PROTECTED_PLAYERS = (process.env.PVP_WHITELIST || 'ImVairo,TheDexline')
 const FOLLOW_PLAYER = process.env.FOLLOW_PLAYER || 'ImVairo'
 const FOLLOW_DISTANCE = 3
 const TELEPORT_DISTANCE = 40
+const POST_TELEPORT_GRACE_MS = 3000 // بعد از /tp چند ثانیه صبر می‌کنیم تا چانک‌ها لود بشن
 
 // توجه: موجودات پرنده (phantom, ghast, blaze, vex) عمداً حذف شدن، چون
 // تعقیب هدف در هوا باعث میشه حرکت بات با فیزیک سرور همخونی نداشته باشه
@@ -46,6 +47,7 @@ let followTimer = null
 let reconnectTimer = null
 let inCombat = false
 let followingImVairo = false
+let teleportGraceUntil = 0
 
 // ===== محافظ عمومی: هیچ خطای داخلی نباید کل برنامه رو کرش کنه =====
 // این تابع روی هر EventEmitter (bot و bot._client) اعمال می‌شه تا اگه هر
@@ -96,6 +98,9 @@ function createBot() {
     spawnPos = bot.entity.position.clone()
 
     const movements = new Movements(bot)
+    movements.allowParkour = false
+    movements.canDig = false
+    movements.allow1by1towers = false
     bot.pathfinder.setMovements(movements)
 
     bot.pvp.followRange = 2
@@ -169,8 +174,9 @@ function handleDamageEvent(data) {
 
   // حالت ۱: خود یوتا آسیب دیده
   if (victimIsBot) {
+    console.log(`[Yuta] یوتا آسیب دید از: ${attackerUsername || attacker.name || 'نامشخص'}`)
     if (attackerUsername && PROTECTED_PLAYERS.includes(attackerUsername)) {
-      // دوستان یوتا هستن، باهاشون نمی‌جنگه؛ فقط یه واکنش بامزه نشون می‌ده
+      console.log('[Yuta] حمله‌کننده جزو افراد محافظت‌شده‌ست، فقط واکنش نشون می‌ده.')
       sitStandGesture()
       return
     }
@@ -212,6 +218,7 @@ function engageCombat(target) {
 }
 
 function sitStandGesture() {
+  console.log('[Yuta] نشستن/بلندشدن (بدون حمله متقابل).')
   try {
     bot.setControlState('sneak', true)
     setTimeout(() => {
@@ -242,9 +249,10 @@ function startFollowing() {
   followTimer = setInterval(() => {
     try {
       if (inCombat) return
+      if (Date.now() < teleportGraceUntil) return // تازه تلپورت شده، صبر کن چانک‌ها لود بشن
+
       const target = bot.players[FOLLOW_PLAYER]
       if (!target) {
-        // آنلاین نیست؛ به رفتار عادی برگرد
         if (followingImVairo) {
           followingImVairo = false
           try { bot.pathfinder.setGoal(null) } catch (e) {}
@@ -253,14 +261,19 @@ function startFollowing() {
       }
 
       if (!target.entity) {
-        // آنلاینه ولی خارج از دید یوتاست؛ چون یوتا اوپیه، بهش تلپورت می‌شه
+        followingImVairo = false
+        try { bot.pathfinder.setGoal(null) } catch (e) {}
         safeChat(`/tp ${USERNAME} ${FOLLOW_PLAYER}`)
+        teleportGraceUntil = Date.now() + POST_TELEPORT_GRACE_MS
         return
       }
 
       const dist = bot.entity.position.distanceTo(target.entity.position)
       if (dist > TELEPORT_DISTANCE) {
+        followingImVairo = false
+        try { bot.pathfinder.setGoal(null) } catch (e) {}
         safeChat(`/tp ${USERNAME} ${FOLLOW_PLAYER}`)
+        teleportGraceUntil = Date.now() + POST_TELEPORT_GRACE_MS
         return
       }
 
