@@ -23,12 +23,15 @@ const FOLLOW_PLAYER = process.env.FOLLOW_PLAYER || 'ImVairo'
 const FOLLOW_DISTANCE = 3
 const TELEPORT_DISTANCE = 40
 
+// توجه: موجودات پرنده (phantom, ghast, blaze, vex) عمداً حذف شدن، چون
+// تعقیب هدف در هوا باعث میشه حرکت بات با فیزیک سرور همخونی نداشته باشه
+// و سرور اونو با خطای invalid_player_movement اخراج کنه.
 const HOSTILE_MOBS = new Set([
   'zombie', 'skeleton', 'spider', 'creeper', 'enderman', 'witch', 'drowned',
-  'husk', 'stray', 'phantom', 'pillager', 'vindicator', 'evoker', 'ravager',
-  'zombie_villager', 'cave_spider', 'silverfish', 'blaze', 'ghast',
+  'husk', 'stray', 'pillager', 'vindicator', 'evoker', 'ravager',
+  'zombie_villager', 'cave_spider', 'silverfish',
   'magma_cube', 'slime', 'piglin_brute', 'hoglin', 'zoglin',
-  'wither_skeleton', 'vex', 'guardian', 'elder_guardian', 'shulker'
+  'wither_skeleton', 'guardian', 'elder_guardian', 'shulker'
 ])
 
 if (!HOST) {
